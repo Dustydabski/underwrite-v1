@@ -4,7 +4,9 @@ import { MockPropertyProvider } from "@/lib/providers/MockPropertyProvider";
 import { SimplyRetsProvider } from "@/lib/providers/SimplyRetsProvider";
 import { AttomProvider } from "@/lib/providers/AttomProvider";
 import { RentCastProvider } from "@/lib/providers/RentCastProvider";
+import { BudgetGuardedProvider } from "@/lib/providers/BudgetGuardedProvider";
 import { buildDefaultAssumptions } from "@/lib/defaults";
+import { checkIpRateLimit, getClientIp } from "@/lib/rateLimit";
 
 // Provider registry lives here so swapping/adding real providers (Zillow,
 // Rentometer, county assessor, ...) is a one-line change.
@@ -13,13 +15,40 @@ import { buildDefaultAssumptions } from "@/lib/defaults";
 // data, requires ATTOM_API_KEY and account approval), then SimplyRETS (real
 // RESO-shaped MLS API, but demo sandbox only matches its own fake listings),
 // then falls back to the fully-synthetic mock provider if nothing matched.
+//
+// RentCast and ATTOM are wrapped in BudgetGuardedProvider: each lookup costs
+// multiple real API calls (RentCast: property + value + rent = 3; ATTOM:
+// expandedprofile + rentalavm = 2), and neither vendor offers a hard usage
+// cap, so we enforce our own monthly ceiling to prevent surprise billing
+// once this app has more than one user. Requires Upstash Redis (Vercel ->
+// Storage -> Marketplace -> "Upstash for Redis") to actually take effect —
+// without it, these guards fail open (no cap) and calls flow through as
+// before. Caps are configurable via env vars; defaults are conservative.
 const registry = new ProviderRegistry()
-  .register(new RentCastProvider())
-  .register(new AttomProvider())
+  .register(
+    new BudgetGuardedProvider(
+      new RentCastProvider(),
+      "rentcast",
+      3,
+      Number(process.env.RENTCAST_MONTHLY_CAP) || 45
+    )
+  )
+  .register(
+    new BudgetGuardedProvider(new AttomProvider(), "attom", 2, Number(process.env.ATTOM_MONTHLY_CAP) || 90)
+  )
   .register(new SimplyRetsProvider())
   .register(new MockPropertyProvider());
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req);
+  const withinRateLimit = await checkIpRateLimit(ip);
+  if (!withinRateLimit) {
+    return NextResponse.json(
+      { error: "Too many requests from this address. Try again in a bit." },
+      { status: 429 }
+    );
+  }
+
   const body = await req.json().catch(() => null);
   const address = body?.address?.trim();
 
