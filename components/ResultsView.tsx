@@ -39,7 +39,7 @@ export function ResultsView({ result }: { result: AnalysisResult }) {
                 "This property appears attractive at the current price, given the selected assumptions."}
               {recommendation === "CONSIDER" &&
                 "This deal is borderline — it may work with tighter terms or a lower price."}
-              {recommendation === "PASS" &&
+              {recommendation === "AVOID" &&
                 "This property does not meet a reasonable investment bar at the current price and assumptions."}
             </p>
           </div>

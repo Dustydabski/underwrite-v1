@@ -165,7 +165,7 @@ export interface ScoreBreakdown {
   total: number; // /100
 }
 
-export type Recommendation = "BUY" | "CONSIDER" | "PASS";
+export type Recommendation = "BUY" | "CONSIDER" | "AVOID";
 
 export interface MaxPriceResult {
   askingPrice: number;

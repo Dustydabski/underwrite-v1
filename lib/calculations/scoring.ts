@@ -55,9 +55,9 @@ export function calculateScore(inputs: ScoreInputs): ScoreBreakdown {
 }
 
 export function recommendationFromScore(total: number, monthlyCashFlow: number): Recommendation {
-  if (total >= 75 && monthlyCashFlow >= 0) return "BUY";
+  if (total >= 70 && monthlyCashFlow >= 0) return "BUY";
   if (total >= 50) return "CONSIDER";
-  return "PASS";
+  return "AVOID";
 }
 
 export function buildReasons(
