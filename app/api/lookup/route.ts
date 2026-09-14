@@ -3,15 +3,18 @@ import { ProviderRegistry } from "@/lib/providers/PropertyDataProvider";
 import { MockPropertyProvider } from "@/lib/providers/MockPropertyProvider";
 import { SimplyRetsProvider } from "@/lib/providers/SimplyRetsProvider";
 import { AttomProvider } from "@/lib/providers/AttomProvider";
+import { RentCastProvider } from "@/lib/providers/RentCastProvider";
 import { buildDefaultAssumptions } from "@/lib/defaults";
 
 // Provider registry lives here so swapping/adding real providers (Zillow,
-// Estated, Rentometer, county assessor, ...) is a one-line change.
-// Tries ATTOM first (real assessor/AVM data for arbitrary US addresses,
-// requires ATTOM_API_KEY), then SimplyRETS (real RESO-shaped MLS API, but
-// demo sandbox only matches its own fake listings), then falls back to the
-// fully-synthetic mock provider if nothing else found a match.
+// Rentometer, county assessor, ...) is a one-line change.
+// Tries RentCast first (property + tax + AVM + rent in one provider, real
+// US addresses, self-serve no approval queue), then ATTOM (same category of
+// data, requires ATTOM_API_KEY and account approval), then SimplyRETS (real
+// RESO-shaped MLS API, but demo sandbox only matches its own fake listings),
+// then falls back to the fully-synthetic mock provider if nothing matched.
 const registry = new ProviderRegistry()
+  .register(new RentCastProvider())
   .register(new AttomProvider())
   .register(new SimplyRetsProvider())
   .register(new MockPropertyProvider());
