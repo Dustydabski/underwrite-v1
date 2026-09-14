@@ -17,21 +17,22 @@ import { checkIpRateLimit, getClientIp, isAdminRequest } from "@/lib/rateLimit";
 // then falls back to the fully-synthetic mock provider if nothing matched.
 //
 // RentCast and ATTOM are wrapped in BudgetGuardedProvider: each lookup costs
-// multiple real API calls (RentCast: property + value + rent = 3; ATTOM:
-// expandedprofile + rentalavm = 2), and neither vendor offers a hard usage
-// cap, so we enforce our own monthly ceiling to prevent surprise billing
-// once this app has more than one user. Per-IP requests are also throttled
-// (default 5/hour, see checkIpRateLimit) with an admin cookie bypass for the
-// owner (see /api/admin-login). All of this requires Upstash Redis (Vercel
-// -> Storage -> Marketplace -> "Upstash for Redis") to actually take effect
-// — without it, these guards fail open (no cap) and calls flow through as
-// before. Caps are configurable via env vars; defaults are conservative.
+// multiple real API calls (RentCast: property + value + rent + sale listing
+// = 4; ATTOM: expandedprofile + rentalavm = 2), and neither vendor offers a
+// hard usage cap, so we enforce our own monthly ceiling to prevent surprise
+// billing once this app has more than one user. Per-IP requests are also
+// throttled (default 5/hour, see checkIpRateLimit) with an admin cookie
+// bypass for the owner (see /api/admin-login). All of this requires Upstash
+// Redis (Vercel -> Storage -> Marketplace -> "Upstash for Redis") to
+// actually take effect — without it, these guards fail open (no cap) and
+// calls flow through as before. Caps are configurable via env vars;
+// defaults are conservative.
 const registry = new ProviderRegistry()
   .register(
     new BudgetGuardedProvider(
       new RentCastProvider(),
       "rentcast",
-      3,
+      4,
       Number(process.env.RENTCAST_MONTHLY_CAP) || 45
     )
   )

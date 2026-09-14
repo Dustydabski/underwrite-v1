@@ -2,12 +2,12 @@ import { PropertyDataProvider, PropertyRecord } from "../types";
 import { PropertyLookupError } from "./PropertyDataProvider";
 
 /**
- * Real property/tax/AVM/rent data via RentCast's API. Covers arbitrary US
- * addresses with self-serve signup (no approval queue, unlike ATTOM) — get
- * a key at https://developers.rentcast.io and set RENTCAST_API_KEY.
- * Free tier is 50 requests/month, and each lookup here costs up to 3
- * requests (property record + value estimate + rent estimate), so budget
- * accordingly.
+ * Real property/tax/AVM/rent/listing data via RentCast's API. Covers
+ * arbitrary US addresses with self-serve signup (no approval queue, unlike
+ * ATTOM) — get a key at https://developers.rentcast.io and set
+ * RENTCAST_API_KEY. Free tier is 50 requests/month, and each lookup here
+ * costs up to 4 requests (property record + value estimate + rent estimate
+ * + active sale listing), so budget accordingly.
  */
 export class RentCastProvider implements PropertyDataProvider {
   readonly name = "RentCast";
@@ -48,14 +48,16 @@ export class RentCastProvider implements PropertyDataProvider {
       throw new PropertyLookupError(`No RentCast record found for "${address}".`, this.name);
     }
 
-    // Value + rent estimates are separate billed endpoints — fetched best
-    // effort in parallel so a miss on either doesn't fail the whole lookup.
-    const [valueEstimate, rentEstimate] = await Promise.all([
+    // Value + rent estimates + active listing are separate billed endpoints
+    // — fetched best effort in parallel so a miss on any doesn't fail the
+    // whole lookup.
+    const [valueEstimate, rentEstimate, saleListing] = await Promise.all([
       this.fetchEstimate("avm/value", encodedAddress, "price", "priceRangeLow", "priceRangeHigh"),
       this.fetchEstimate("avm/rent/long-term", encodedAddress, "rent", "rentRangeLow", "rentRangeHigh"),
+      this.fetchSaleListing(encodedAddress),
     ]);
 
-    return toPropertyRecord(record, address, valueEstimate, rentEstimate);
+    return toPropertyRecord(record, address, valueEstimate, rentEstimate, saleListing);
   }
 
   private async fetchEstimate(
@@ -75,6 +77,30 @@ export class RentCastProvider implements PropertyDataProvider {
       const value = toNumber(body?.[valueField]);
       if (value == null) return null;
       return { value, low: toNumber(body?.[lowField]), high: toNumber(body?.[highField]) };
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchSaleListing(
+    encodedAddress: string
+  ): Promise<{ price: number; status: string; daysOnMarket: number | null; listedDate: string | null } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/listings/sale?address=${encodedAddress}`, {
+        headers: { "X-Api-Key": this.apiKey!, Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      const listings = await res.json();
+      const listing = Array.isArray(listings) ? listings[0] : null;
+      const price = toNumber(listing?.price);
+      if (!listing || price == null) return null;
+      return {
+        price,
+        status: listing.status ?? "Unknown",
+        daysOnMarket: toNumber(listing.daysOnMarket),
+        listedDate: typeof listing.listedDate === "string" ? listing.listedDate.slice(0, 10) : null,
+      };
     } catch {
       return null;
     }
@@ -100,16 +126,20 @@ function toPropertyRecord(
   record: any,
   originalAddress: string,
   valueEstimate: { value: number; low: number | null; high: number | null } | null,
-  rentEstimate: { value: number; low: number | null; high: number | null } | null
+  rentEstimate: { value: number; low: number | null; high: number | null } | null,
+  saleListing: { price: number; status: string; daysOnMarket: number | null; listedDate: string | null } | null
 ): PropertyRecord {
   const annualPropertyTaxes = latestYearField(record.propertyTaxes, "total");
   const assessedValue = latestYearField(record.taxAssessments, "value");
+  const isActiveListing = saleListing != null && saleListing.status?.toLowerCase() === "active";
 
   return {
     address: record.formattedAddress ?? originalAddress,
     propertyType: record.propertyType ?? "Unknown",
     unitCount: toNumber(record.features?.unitCount),
-    listPrice: null, // RentCast is assessor/AVM data, not active listing data.
+    listPrice: isActiveListing
+      ? { value: saleListing!.price, confidence: "high", source: "RentCast active listing" }
+      : null,
     estimatedValue:
       valueEstimate != null
         ? { value: Math.round(valueEstimate.value), confidence: "medium", source: "RentCast AVM" }
@@ -139,6 +169,11 @@ function toPropertyRecord(
     estimatedOccupancySTR: null,
     notes: [
       "Source: RentCast (property + tax + AVM + rent estimate for a real address).",
+      isActiveListing
+        ? `Actively listed for sale${
+            saleListing!.daysOnMarket != null ? ` (${saleListing!.daysOnMarket} days on market)` : ""
+          }${saleListing!.listedDate ? `, listed ${saleListing!.listedDate}` : ""}.`
+        : "Not currently listed for sale on RentCast — purchase price defaults to the AVM estimate; edit if you have a real asking price.",
       valueEstimate?.low != null && valueEstimate?.high != null
         ? `Value estimate range: $${Math.round(valueEstimate.low).toLocaleString()}–$${Math.round(
             valueEstimate.high
@@ -149,7 +184,7 @@ function toPropertyRecord(
             rentEstimate.high
           ).toLocaleString()}/mo.`
         : "",
-      "RentCast doesn't provide list price or STR data — connect an MLS feed / AirDNA/AirROI for those, or edit manually.",
+      "RentCast doesn't provide STR data — connect AirDNA/AirROI for that, or edit manually.",
     ].filter(Boolean),
   };
 }
