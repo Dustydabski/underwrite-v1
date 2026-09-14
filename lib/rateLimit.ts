@@ -35,8 +35,24 @@ export function getClientIp(req: NextRequest): string {
   return req.headers.get("x-real-ip") ?? "unknown";
 }
 
+export const ADMIN_COOKIE_NAME = "admin_session";
+
+/**
+ * True if this request carries a valid admin cookie (set once via
+ * GET /api/admin-login?key=... — see that route). Admin requests skip the
+ * per-IP rate limit below, but NOT the monthly budget cap in
+ * reserveMonthlyBudget — that's a real dollar ceiling and should hold
+ * regardless of who's calling. No-ops (always false) if ADMIN_ACCESS_KEY
+ * isn't configured.
+ */
+export function isAdminRequest(req: NextRequest): boolean {
+  const adminKey = process.env.ADMIN_ACCESS_KEY;
+  if (!adminKey) return false;
+  return req.cookies.get(ADMIN_COOKIE_NAME)?.value === adminKey;
+}
+
 /** Max requests per IP per hour. Fails open (allows) if Redis isn't configured. */
-export async function checkIpRateLimit(ip: string, maxPerHour = 20): Promise<boolean> {
+export async function checkIpRateLimit(ip: string, maxPerHour = Number(process.env.IP_RATE_LIMIT_PER_HOUR) || 5): Promise<boolean> {
   const client = getRedis();
   if (!client) return true;
 

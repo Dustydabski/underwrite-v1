@@ -6,7 +6,7 @@ import { AttomProvider } from "@/lib/providers/AttomProvider";
 import { RentCastProvider } from "@/lib/providers/RentCastProvider";
 import { BudgetGuardedProvider } from "@/lib/providers/BudgetGuardedProvider";
 import { buildDefaultAssumptions } from "@/lib/defaults";
-import { checkIpRateLimit, getClientIp } from "@/lib/rateLimit";
+import { checkIpRateLimit, getClientIp, isAdminRequest } from "@/lib/rateLimit";
 
 // Provider registry lives here so swapping/adding real providers (Zillow,
 // Rentometer, county assessor, ...) is a one-line change.
@@ -20,9 +20,11 @@ import { checkIpRateLimit, getClientIp } from "@/lib/rateLimit";
 // multiple real API calls (RentCast: property + value + rent = 3; ATTOM:
 // expandedprofile + rentalavm = 2), and neither vendor offers a hard usage
 // cap, so we enforce our own monthly ceiling to prevent surprise billing
-// once this app has more than one user. Requires Upstash Redis (Vercel ->
-// Storage -> Marketplace -> "Upstash for Redis") to actually take effect —
-// without it, these guards fail open (no cap) and calls flow through as
+// once this app has more than one user. Per-IP requests are also throttled
+// (default 5/hour, see checkIpRateLimit) with an admin cookie bypass for the
+// owner (see /api/admin-login). All of this requires Upstash Redis (Vercel
+// -> Storage -> Marketplace -> "Upstash for Redis") to actually take effect
+// — without it, these guards fail open (no cap) and calls flow through as
 // before. Caps are configurable via env vars; defaults are conservative.
 const registry = new ProviderRegistry()
   .register(
@@ -40,13 +42,19 @@ const registry = new ProviderRegistry()
   .register(new MockPropertyProvider());
 
 export async function POST(req: NextRequest) {
-  const ip = getClientIp(req);
-  const withinRateLimit = await checkIpRateLimit(ip);
-  if (!withinRateLimit) {
-    return NextResponse.json(
-      { error: "Too many requests from this address. Try again in a bit." },
-      { status: 429 }
-    );
+  // Admin cookie (set via /api/admin-login) skips the per-IP throttle so
+  // the owner can keep working without getting caught by a limit that's
+  // deliberately tight for everyone else. Still subject to the monthly
+  // budget cap below — that's the real dollar ceiling, not a spam filter.
+  if (!isAdminRequest(req)) {
+    const ip = getClientIp(req);
+    const withinRateLimit = await checkIpRateLimit(ip);
+    if (!withinRateLimit) {
+      return NextResponse.json(
+        { error: "Too many requests from this address. Try again in a bit." },
+        { status: 429 }
+      );
+    }
   }
 
   const body = await req.json().catch(() => null);
